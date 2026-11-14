@@ -2,7 +2,7 @@
 <html lang="ja">
 <head><meta name="robots" content="noindex,nofollow">
 <meta charset="utf-8">
-<meta name="app-ver" content="2026-11-14 23:12">
+<meta name="app-ver" content="2026-11-14 23:34">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -522,7 +522,44 @@ mq.addEventListener('change',()=>render());
 let cur = null; // 編集中のマス
 
 function blank(){ return {bookings:{}, rules:[], skips:{}, dayMemos:{}, noshow:{}, cancels:[], patients:[], settings:{start:6,end:23,open:8,close:20,link:'',offDows:[0],holidayOff:true}}; }
-function merge(d){ const b=blank(); const o=Object.assign(b, d, {settings:Object.assign(b.settings, d.settings||{})}); stripAuto(o); return o; }
+function merge(d){ const o=clean(d); stripAuto(o); return o; }
+// 読み込んだデータ(ファイル・引っ越し・端末の保存)を、決まった形と値だけにそろえる。
+// 画面の HTML に入る値(区分・負担割合・時間・日付・ID など)に余計な文字が入らないようにする(細工したファイル対策)
+function cStr(v,max){ return typeof v==='string' ? v.slice(0,max||500) : (typeof v==='number' ? String(v) : ''); }
+function cInt(v,lo,hi,def){ if(v===null||v===undefined||v==='') return def; const n=Number(v); return Number.isInteger(n) && n>=lo && n<=hi ? n : def; }
+function cType(v){ return v==='new'||v==='visit' ? v : 'normal'; }
+function cBk(b){ return b && typeof b==='object' ? {name:cStr(b.name,100), type:cType(b.type), memo:cStr(b.memo)} : null; }
+function clean(d){
+  const RE_DATE=/^\d{4}-\d{2}-\d{2}$/, RE_BKEY=/^\d{4}-\d{2}-\d{2}\|\d{1,2}\|[01]$/, RE_ID=/^[A-Za-z0-9_-]{1,40}$/; // load() から先に呼ばれるので関数の中で定義
+  const b=blank(); d = d && typeof d==='object' ? d : {};
+  const obj=x=> x && typeof x==='object' && !Array.isArray(x) ? x : {};
+  for(const [k,v] of Object.entries(obj(d.bookings))){ const x=cBk(v); if(RE_BKEY.test(k) && x && x.name) b.bookings[k]=x; }
+  (Array.isArray(d.rules)?d.rules:[]).forEach(r=>{ if(!r||typeof r!=='object') return;
+    const from=RE_DATE.test(r.from)?r.from:null; if(!from) return;
+    const x=cBk(r); if(!x||!x.name) return;
+    const id=RE_ID.test(String(r.id||'')) ? String(r.id) : uid();
+    b.rules.push({id, dow:cInt(r.dow,0,6,parse(from).getDay()), hour:cInt(r.hour,0,23,9), slot:cInt(r.slot,0,1,0), from, to:RE_DATE.test(r.to)?r.to:'', every:cInt(r.every,1,12,1), ...x}); });
+  for(const [k,v] of Object.entries(obj(d.skips))){ const [id,dt]=k.split('|'); if(RE_ID.test(id||'') && RE_DATE.test(dt||'') && (v===true||v==='moved'||v==='cancel')) b.skips[k]=v; }
+  for(const [k,v] of Object.entries(obj(d.dayMemos))){ if(RE_DATE.test(k) && typeof v==='string' && v) b.dayMemos[k]=v.slice(0,5000); }
+  for(const [k,v] of Object.entries(obj(d.noshow))){ if(RE_BKEY.test(k) && v) b.noshow[k]=true; }
+  (Array.isArray(d.cancels)?d.cancels:[]).forEach(c=>{ if(!c||typeof c!=='object'||!RE_DATE.test(c.date)) return; const name=cStr(c.name,100); if(!name) return;
+    b.cancels.push({id:RE_ID.test(String(c.id||''))?String(c.id):uid(), date:c.date, h:cInt(c.h,0,23,0), s:cInt(c.s,0,1,0), name, type:cType(c.type), memo:cStr(c.memo),
+      kind:c.kind==='booking'||c.kind==='rule'?c.kind:undefined, bk:cBk(c.bk), rid:RE_ID.test(String(c.rid||''))?String(c.rid):null, ns:!!c.ns}); });
+  const seen=new Set();
+  (Array.isArray(d.patients)?d.patients:[]).forEach(p=>{ if(!p||typeof p!=='object') return; const name=cStr(p.name,100); if(!name||seen.has(name)) return; seen.add(name);
+    const q={name, kana:cStr(p.kana,100)}; if(p.kouki) q.kouki=true; const f=cInt(p.futan,0,3,null); if(f!==null) q.futan=f; b.patients.push(q); });
+  const st=obj(d.settings), bs=b.settings;
+  const start=cInt(st.start,0,23,bs.start), end=cInt(st.end,0,23,bs.end);
+  if(start<end){ bs.start=start; bs.end=end; }
+  bs.open=cInt(st.open,0,24,bs.open); bs.close=cInt(st.close,0,24,bs.close);
+  bs.link=cLink(st.link);
+  if(Array.isArray(st.offDows)) bs.offDows=[...new Set(st.offDows.map(v=>cInt(v,0,6,null)).filter(v=>v!==null))];
+  if(typeof st.holidayOff==='boolean') bs.holidayOff=st.holidayOff;
+  return b;
+}
+// 診療報酬システムのリンクは http:// か https:// で始まるものだけ(javascript: などは使わない)
+function cLink(v){ v=cStr(v,1000).trim(); return /^https?:\/\//i.test(v) ? v : ''; }
+function cDone(o){ const RE_BKEY=/^\d{4}-\d{2}-\d{2}\|\d{1,2}\|[01]$/; const r={}; if(o&&typeof o==='object') for(const [k,v] of Object.entries(o)){ if(RE_BKEY.test(k) && (v===1||v===true||(typeof v==='string'&&v))) r[k]= typeof v==='string' ? v.slice(0,100) : 1; } return r; }
 // キャンセル・固定客の休みは MEMO 本文に書かず、記録(S.cancels / S.skips)から行を作って MEMO 欄の上に「戻す」付きで出す
 function autoLines(ds,st){ st=st||S; const out=[];
   (st.cancels||[]).forEach((c,i)=>{ if(c.date===ds) out.push({h:c.h,s:c.s,text:`${c.h}:00 ${c.name}さん キャンセル`,ci:i}); });
@@ -561,7 +598,7 @@ function load(){
 const MODE_KEY=KEY+'_pc', DONE_KEY=KEY+'_done';
 function roMeta(){ try{ return JSON.parse(localStorage.getItem(MODE_KEY)); }catch(e){ return null; } }
 function isRO(){ return !!roMeta(); }
-let DONE={}; try{ DONE=JSON.parse(localStorage.getItem(DONE_KEY))||{}; }catch(e){}
+let DONE={}; try{ DONE=cDone(JSON.parse(localStorage.getItem(DONE_KEY))); }catch(e){}
 function saveDone(){ try{ localStorage.setItem(DONE_KEY, JSON.stringify(DONE)); }catch(e){} }
 function save(){
   if(isRO()){ alert('このPCは閲覧専用です(iPadから受け取ったデータ)。予約の入力・変更は iPad でしてください。\nこのPCで入力したいときは、上の紫の帯の「このPCでも入力する」を押してください。'); S=load(); render(); return; }
@@ -593,12 +630,15 @@ function lookup(date,h,s){
   return null;
 }
 
+// 入力済みは「枠＋その人の名前」で記録(古い記録の 1 は名前なしで枠だけ)
+function isDone(k,name){ const v=DONE[k]; return v===1||v===true ? true : (typeof v==='string' && v===name); }
+function setDone(k,name,on){ if(on) DONE[k]=name||1; else delete DONE[k]; saveDone(); }
 function cellHtml(x,k){
   if(!x) return '';
   if(x.kind==='skipped' && x.moved) return ''; // ドラッグで別の日時へ移した元の枠は空きとして見せる
   if(x.kind==='skipped') return `<div class="skipped">${esc(x.rule.name)}(休み)</div>`;
   const tags = (x.kind==='rule'?'<b class="tag f">固</b>':'') + ((x.type||'normal')==='normal'?'<b class="kaku">既</b>':'') + (x.type==='new'?'<b class="maru">新</b>':'') + (x.type==='visit'?'<b class="tag v">往</b>':'');
-  const dn = k && DONE[k] && !x.ns;
+  const dn = k && isDone(k,x.name) && !x.ns;
   return `<div class="bk ${x.type||'normal'} ${x.kind==='rule'?'fixed':''} ${dn?'done':''}">${kTag(x.name)}${tags}<span class="nm">${esc(x.name)}</span>${dn?'<b class="dck" title="鍼フォニーに入力済み">✓</b>':''}${x.memo?`<span class="memo">${esc(x.memo)}</span>`:''}</div>`;
 }
 
@@ -832,19 +872,21 @@ document.getElementById('nextAdd').onclick=addNextRow;
 nextRows.addEventListener('click',e=>{ if(e.target.classList.contains('nx')){ e.target.parentNode.remove(); } });
 nextRows.addEventListener('change',nextDow);
 function nextList(){ return [...nextRows.querySelectorAll('.nrow')].map(r=>({date:r.querySelector('input').value, h:+r.querySelector('select').value})).filter(x=>x.date); }
-function freeSlotAt(date,h){ for(const s of [0,1]){ const y=lookup(date,h,s); if(!y || y.kind==='skipped') return s; } return -1; }
+function freeSlotAt(date,h,name){ const ys=[0,1].map(s=>lookup(date,h,s)); if(name && ys.some(y=>y && y.kind!=='skipped' && y.name===name)) return -2; for(const s of [0,1]){ const y=ys[s]; if(!y || y.kind==='skipped') return s; } return -1; }
 function addNextBookings(data){
-  const added=[], ng=[];
+  const added=[], ng=[], dup=[], seen=new Set();
   nextList().sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:a.h-b.h).forEach(n=>{
-    const s=freeSlotAt(n.date,n.h), t=`${md(n.date)} ${n.h}:00`;
+    const t=`${md(n.date)} ${n.h}:00`; if(seen.has(n.date+'|'+n.h)) return; seen.add(n.date+'|'+n.h);
+    const s=freeSlotAt(n.date,n.h,data.name);
+    if(s===-2){ dup.push(t); return; }
     if(s<0){ ng.push(t); return; }
     S.bookings[key(n.date,n.h,s)]={...data}; added.push(t+(s?'(2人目)':''));
   });
-  return {added,ng};
+  return {added,ng,dup};
 }
 // 週数の▼に触れた時点で「◯週間に1回」に切り替える
 ['mouseenter','mousedown','focus','change'].forEach(ev=>fEvery.addEventListener(ev,()=>{ dlg.querySelector('input[name=every][value=n]').checked=true; }));
-document.getElementById('fDone').addEventListener('change',e=>{ const k=key(cur.date,cur.h,cur.s); if(e.target.checked) DONE[k]=1; else delete DONE[k]; saveDone(); render(); });
+document.getElementById('fDone').addEventListener('change',e=>{ setDone(key(cur.date,cur.h,cur.s), cur.x&&cur.x.name, e.target.checked); render(); });
 document.getElementById('fNs').addEventListener('change',e=>{ document.getElementById('dlgNs').hidden=!e.target.checked; });
 function getType(){ return dlg.querySelector('input[name=type]:checked').value; }
 
@@ -864,7 +906,7 @@ function openSlot(date,h,s){
   document.getElementById('fNs').checked = !!(x && x.ns);
   document.getElementById('dlgNs').hidden = !(x && x.ns);
   document.getElementById('fNs').parentElement.hidden = false;
-  document.getElementById('doneBox').hidden = !x; document.getElementById('fDone').checked = !!(x && DONE[key(date,h,s)]);
+  document.getElementById('doneBox').hidden = !x; document.getElementById('fDone').checked = !!(x && isDone(key(date,h,s),x.name));
   fFixed.checked = !!(x && x.kind==='rule');
   setEvery(x && x.rule ? (x.rule.every||1) : 1);
   everyBox.hidden = multiBox.hidden = !fFixed.checked;
@@ -886,7 +928,7 @@ function openSlot(date,h,s){
 
 function updateLink(){
   const box = document.getElementById('linkBox');
-  const url = S.settings.link;
+  const url = cLink(S.settings.link);
   if(!url){ box.innerHTML = ''; return; }
   const name = fName.value.trim();
   if(!name){ box.innerHTML=''; return; }
@@ -897,7 +939,7 @@ function updateLink(){
 // 後期高齢者(患者名簿に記録)
 function isKouki(name){ const p=S.patients.find(p=>p.name===name); return !!(p&&p.kouki); }
 function ptOf(name){ return S.patients.find(p=>p.name===name); }
-function futanText(f){ return f===undefined||f===null||f==='' ? '' : (+f===0 ? '負担なし' : f+'割'); }
+function futanText(f){ const n=cInt(f,0,3,null); return n===null ? '' : (n===0 ? '負担なし' : n+'割'); }
 // 後期高齢者は「[後期]1割」(後期は四角の枠だけ・中は白抜きにしない。固の黒い四角と見分けるため)、後期でない人は3割以外のときだけ「2割」などを出す
 function kTag(name){ const p=ptOf(name); if(!p) return ''; const ft=futanText(p.futan);
   if(p.kouki) return `<b class="kouki"><span class="kb">後期</span>${ft}</b>`;
@@ -974,7 +1016,7 @@ document.getElementById('bSave').onclick = ()=>{
   addPatient(name);
   { const p=S.patients.find(p=>p.name===name); if(p && (ptTouched || ptLoaded===name)){ if(document.getElementById('fKouki').checked) p.kouki=true; else delete p.kouki; const fv=document.getElementById('fFutan').value; if(fv==='') delete p.futan; else p.futan=+fv; } }
   save(); render(); dlg.close();
-  if(nx){ if(nx.ng.length) alert(`次の予約：\n${nx.added.length?'入れました：'+nx.added.join('、')+'\n':''}入れられませんでした(1人目・2人目とも埋まっています)：${nx.ng.join('、')}`); else moved(snap0, `次の予約も入れました：${nx.added.join('、')}`); }
+  if(nx){ if(nx.ng.length||nx.dup.length) alert(`次の予約：\n${nx.added.length?'入れました：'+nx.added.join('、')+'\n':''}${nx.dup.length?'もう入っているので入れませんでした：'+nx.dup.join('、')+'\n':''}${nx.ng.length?'入れられませんでした(1人目・2人目とも埋まっています)：'+nx.ng.join('、'):''}`); else if(nx.added.length) moved(snap0, `次の予約も入れました：${nx.added.join('、')}`); }
   if(ex){ if(ex.ng.length) alert(`ほかの曜日の固定：\n${ex.added.length?'入れました：'+ex.added.join('、')+'\n':''}入れられませんでした(1人目・2人目とも埋まっている回があります)：${ex.ng.join('、')}`); else moved(snap0, `ほかの曜日にも固定で入れました：${ex.added.join('、')}`); }
 };
 document.getElementById('bDelete').onclick = ()=>{
@@ -1189,7 +1231,7 @@ document.getElementById('sSave').onclick=()=>{
   if(+sOpen.value>=+sClose.value){ alert('営業時間の開始は終了より前にしてください'); return; }
   S.settings.open=+sOpen.value; S.settings.close=+sClose.value;
   S.settings.offDows=[...document.querySelectorAll('#sOffDows input:checked')].map(x=>+x.dataset.dow); S.settings.holidayOff=document.getElementById('sHol').checked;
-  S.settings.start=a; S.settings.end=b; S.settings.link=document.getElementById('sLink').value.trim();
+  S.settings.start=a; S.settings.end=b; S.settings.link=cLink(document.getElementById('sLink').value); if(document.getElementById('sLink').value.trim() && !S.settings.link) alert('診療報酬システムの URL は http:// か https:// で始まるものだけ使えます。');
   save(); render(); dlgS.close();
 };
 document.getElementById('sExport').onclick=()=>{
@@ -1377,17 +1419,17 @@ function renderDay(){
   document.getElementById('dDoneNote').textContent = ro
     ? '「報酬入力済」は、診療報酬システムに入力し終えた人にチェックします。このPCだけに保存され、iPadのデータを読み込み直しても消えません。'
     : '「報酬入力済」は、診療報酬システムに入力し終えた人にチェックします(この画面を見ながらPCに入力するとき用)。チェックはこの端末だけに保存されます。';
-  if(list.length && dDate<=ymd(new Date())){ const left=list.filter(x=>!x.ns && !DONE[key(dDate,x.h,x.s)]).length; document.getElementById('dSum').innerHTML += left ? `<span class="todo">報酬システム未入力 ${left}人</span>` : `<span style="color:#15803d;font-weight:bold">報酬システム 全員入力済み</span>`; }
+  if(list.length && dDate<=ymd(new Date())){ const left=list.filter(x=>!x.ns && !isDone(key(dDate,x.h,x.s),x.name)).length; document.getElementById('dSum').innerHTML += left ? `<span class="todo">報酬システム未入力 ${left}人</span>` : `<span style="color:#15803d;font-weight:bold">報酬システム 全員入力済み</span>`; }
   document.getElementById('dList').innerHTML = list.length
     ? `<table class="dtable"><tr><th>時間</th><th>氏名</th><th>区分</th><th>メモ</th><th>受診なし</th><th>報酬入力済</th></tr>`
-      + list.map(x=>`<tr class="${x.ns?'ns':DONE[key(dDate,x.h,x.s)]?'done':''}"><td>${x.h}:00${x.s?'(2人目)':''}</td><td>${kTag(x.name)}<span class="nm">${esc(x.name)}</span>${x.kind==='rule'?' <b class="tag f">固</b>':''}</td><td>${x.type==='new'?'<b class="maru">新</b>':x.type==='visit'?'<b class="tag v">往</b>':'<b class="kaku">既</b>'}${TYPE_LABEL[x.type]||''}</td><td>${esc(x.memo||'')}</td><td class="c"><input type="checkbox" data-ns="${key(dDate,x.h,x.s)}" ${x.ns?'checked':''} ${ro?'disabled':''}></td><td class="c">${x.ns?'<span class="dn">—</span>':`<input type="checkbox" data-done="${key(dDate,x.h,x.s)}" ${DONE[key(dDate,x.h,x.s)]?'checked':''}>`}</td></tr>`).join('')
+      + list.map(x=>`<tr class="${x.ns?'ns':isDone(key(dDate,x.h,x.s),x.name)?'done':''}"><td>${x.h}:00${x.s?'(2人目)':''}</td><td>${kTag(x.name)}<span class="nm">${esc(x.name)}</span>${x.kind==='rule'?' <b class="tag f">固</b>':''}</td><td>${x.type==='new'?'<b class="maru">新</b>':x.type==='visit'?'<b class="tag v">往</b>':'<b class="kaku">既</b>'}${TYPE_LABEL[x.type]||''}</td><td>${esc(x.memo||'')}</td><td class="c"><input type="checkbox" data-ns="${key(dDate,x.h,x.s)}" ${x.ns?'checked':''} ${ro?'disabled':''}></td><td class="c">${x.ns?'<span class="dn">—</span>':`<input type="checkbox" data-done="${key(dDate,x.h,x.s)}" data-dn="${esc(x.name)}" ${isDone(key(dDate,x.h,x.s),x.name)?'checked':''}>`}</td></tr>`).join('')
       + '</table>'
     : '<div class="note">この日の予約はありません。</div>';
 }
 function openDay(ds){ dDate=ds; renderDay(); if(!dlgD.open) dlgD.showModal(); }
 document.getElementById('dList').addEventListener('change',e=>{
   const dk=e.target.dataset.done;
-  if(dk){ if(e.target.checked) DONE[dk]=1; else delete DONE[dk]; saveDone(); renderDay(); render(); return; }
+  if(dk){ setDone(dk, e.target.dataset.dn, e.target.checked); renderDay(); render(); return; }
   const k=e.target.dataset.ns; if(!k) return;
   if(e.target.checked) S.noshow[k]=true; else delete S.noshow[k];
   save(); renderDay(); render();
@@ -1428,7 +1470,7 @@ function receive(f){
     if(!m && !confirm('このPCの予約表を、iPadから送られたデータで置き換えます。\n以後このPCは閲覧専用になります(予約の入力は iPad で)。よろしいですか？')) return;
     S=merge(data); saveRaw();
     try{ localStorage.setItem(MODE_KEY, JSON.stringify({sentAt:d.sentAt||'', loadedAt:stamp(new Date())})); }catch(e){}
-    document.querySelectorAll('dialog[open]').forEach(x=>x.close());
+    document.querySelectorAll('dialog[open]:not(#dlgMove)').forEach(x=>x.close());
     render(); openDay(ymd(new Date()));
   });
 }
@@ -1476,8 +1518,11 @@ function moveIn(d){
   const pk = d.pack || {main:JSON.stringify(d.data), done:d.done||null, fs:null, pc:null};
   if(!pk.main || !hasData(pk.main)){ alert('前の住所の予約表には、移す予約がありませんでした。'); return false; }
   if(hasData(lsGet(KEY)) && !confirm('この新しい予約表には、もう予約が入っています。\n前の住所の予約で置き換えますか？(今ここにある予約は消えます)')) return false;
-  lsSet(KEY,pk.main); lsSet(KEY+'_done',pk.done); if(pk.fs!=null) lsSet(KEY+'_fs',pk.fs); lsSet(KEY+'_pc',pk.pc);
-  S=load(); try{ DONE=JSON.parse(lsGet(KEY+'_done'))||{}; }catch(e){ DONE={}; }
+  let main; try{ main=merge(JSON.parse(pk.main)); }catch(e){ alert('引っ越しのデータを読めませんでした。'); return false; }
+  let dn={}; try{ dn=cDone(JSON.parse(pk.done||'{}')); }catch(e){}
+  let pc=null; try{ const m=JSON.parse(pk.pc||'null'); if(m && typeof m==='object') pc=JSON.stringify({sentAt:cStr(m.sentAt,40), loadedAt:cStr(m.loadedAt,40)}); }catch(e){}
+  lsSet(KEY,JSON.stringify(main)); lsSet(KEY+'_done',JSON.stringify(dn)); if(pk.fs==='0'||pk.fs==='1') lsSet(KEY+'_fs',pk.fs); lsSet(KEY+'_pc',pc);
+  S=load(); try{ DONE=cDone(JSON.parse(lsGet(KEY+'_done'))); }catch(e){ DONE={}; }
   document.querySelectorAll('dialog[open]').forEach(x=>x.close()); render();
   alert('引っ越しが済みました。予約データをこの新しい住所の予約表に移しました。\nこれからは、この住所(amatsumi-yoyaku.pages.dev)の予約表を使ってください。');
   return true;
@@ -1495,20 +1540,31 @@ if(isNewSite && location.hash==='#move'){
   setTimeout(ping,300);
 }
 // 古い住所:引っ越しの案内(閉じられない)
+// iOS のホーム画面アイコンから開いたとき(Safari と保存場所が別)。新しい画面を開く方法だと Safari 側に入ってしまう
+function isStandalone(){ try{ return navigator.standalone===true || matchMedia('(display-mode: standalone)').matches; }catch(e){ return false; } }
 function showMove(){
-  const moved=lsGet(KEY+'_moved'), any=hasData(lsGet(KEY));
+  const moved=lsGet(KEY+'_moved'), any=hasData(lsGet(KEY)), app=isStandalone();
   const body=document.getElementById('mvBody'), foot=document.getElementById('mvFoot');
   body.innerHTML = `<p style="margin:4px 0 8px">予約表は、これから <b>${NEW_URL}</b> で使います。</p>`
     + (moved ? `<p class="note">${esc(moved)} に予約データを新しい住所へ移しました。<br>ここで予約を入れても、新しい予約表には反映されません。新しい住所の予約表を使ってください。</p>`
+       : any && app ? `<div class="note" style="line-height:1.7">ホーム画面のアイコンから開いているので、次の順で移してください(データはこの iPad の中だけで移ります)。<ol style="margin:4px 0 0 18px;padding:0">
+           <li>下の「<b>移すファイルを保存する</b>」→ 出てきた画面で「<b>"ファイル"に保存</b>」</li>
+           <li>Safari で <b>${NEW_URL}</b> を開き、共有ボタン →「<b>ホーム画面に追加</b>」</li>
+           <li>できた<b>新しいアイコン</b>で予約表を開き、「☰ メニュー」→「<b>iPadのデータを読み込む</b>」→ 1. で保存したファイルを選ぶ</li>
+           <li>予約が出たら完了です。最後に下の「移し終えた」を押してください(古いアイコンは消してかまいません)</li></ol></div>`
        : any ? `<p class="note">この予約表に入っている予約データを、下のボタンで新しい住所へ移します。データはこの iPad(パソコン)の中だけで移り、インターネットには送られません。<br>新しい画面が開いたら、そのままお待ちください。</p>`
        : `<p class="note">この予約表には予約が入っていないので、新しい住所を開くだけで大丈夫です。</p>`)
     + `<p class="note" style="margin-top:8px">ホーム画面のアイコンから開いている場合は、新しい住所の予約表で、もう一度「ホーム画面に追加」をしてください。</p>`
     + `<div id="mvMsg" class="note" style="color:#b91c1c"></div>`;
-  foot.innerHTML = (any ? `<button type="button" id="mvFile">うまくいかないとき：ファイルで移す</button>` : '')
+  foot.innerHTML = any && app && !moved
+    ? `<button type="button" id="mvDone">移し終えた</button><span class="spacer"></span><button type="button" class="primary" id="mvFile" style="font-size:16px;padding:10px 18px">移すファイルを保存する</button>`
+    : (any ? `<button type="button" id="mvFile">${app?'移すファイルを保存する':'うまくいかないとき：ファイルで移す'}</button>` : '')
     + `<span class="spacer"></span>`
-    + (any && !moved ? `<button type="button" class="primary" id="mvGo" style="font-size:16px;padding:10px 18px">予約データを新しい住所へ移す</button>`
+    + (any && !moved && !app ? `<button type="button" class="primary" id="mvGo" style="font-size:16px;padding:10px 18px">予約データを新しい住所へ移す</button>`
        : `<button type="button" class="primary" id="mvOpen">新しい予約表を開く</button>`)
-    + (any && moved ? `<button type="button" id="mvGo">もう一度移す</button>` : '');
+    + (any && moved && !app ? `<button type="button" id="mvGo">もう一度移す</button>` : '');
+  const md0=document.getElementById('mvDone');
+  if(md0) md0.onclick=()=>{ if(confirm('新しいアイコンの予約表に、予約が出ていることを確かめましたか？')){ lsSet(KEY+'_moved', stamp(new Date())); showMove(); } };
   const g=document.getElementById('mvGo'), o=document.getElementById('mvOpen'), f=document.getElementById('mvFile');
   if(o) o.onclick=()=>{ location.href=NEW_URL; };
   if(g) g.onclick=()=>{
@@ -1517,6 +1573,7 @@ function showMove(){
     const on=e=>{
       if(e.origin!==NEW_ORIGIN || !e.data) return;
       if(e.data.t==='amatsumi-move-ready'){ try{ e.source.postMessage({t:'amatsumi-move-data', pack:movePack()}, NEW_ORIGIN); }catch(err){} }
+      if(e.data.t==='amatsumi-move-ng'){ document.getElementById('mvMsg').textContent='新しい予約表の側で、移すのをやめました。もう一度押すとやり直せます。'; }
       if(e.data.t==='amatsumi-move-ok'){ removeEventListener('message',on); lsSet(KEY+'_moved', stamp(new Date())); showMove(); }
     };
     addEventListener('message',on);
