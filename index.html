@@ -2,7 +2,7 @@
 <html lang="ja">
 <head><meta name="robots" content="noindex,nofollow">
 <meta charset="utf-8">
-<meta name="app-ver" content="2026-11-14 22:59">
+<meta name="app-ver" content="2026-11-14 23:12">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -392,6 +392,11 @@ input[type=text],input[type=url],textarea,select{font:inherit;border:1px solid v
 </dialog>
 
 <!-- スマホ閲覧用の書き出し -->
+<dialog id="dlgMove" style="width:min(520px,calc(100vw - 32px))">
+  <div class="dh">予約表の住所が変わりました</div>
+  <div class="db" id="mvBody"></div>
+  <div class="df" id="mvFoot"></div>
+</dialog>
 <dialog id="dlgLA">
   <div class="dh">予約を LINE で送る</div>
   <div class="db"><p id="laText" style="margin:4px 0 0"></p>
@@ -752,7 +757,7 @@ document.getElementById('mvCancel').onclick=()=>{ mvPending=null; dlgMv.close();
 let bdDown=null;
 function onBackdrop(dl,e){ const r=dl.getBoundingClientRect(); return e.target===dl && (e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom); }
 document.addEventListener('pointerdown',e=>{ const dl=e.target.closest&&e.target.closest('dialog'); bdDown = dl&&dl.open&&onBackdrop(dl,e) ? dl : null; },true);
-document.addEventListener('click',e=>{ const dl=e.target; if(dl.tagName==='DIALOG' && dl.open && bdDown===dl && onBackdrop(dl,e)){ if(dl.id==='dlgMv') mvPending=null; dl.close(); } bdDown=null; },true);
+document.addEventListener('click',e=>{ const dl=e.target; if(dl.tagName==='DIALOG' && dl.open && dl.id!=='dlgMove' && bdDown===dl && onBackdrop(dl,e)){ if(dl.id==='dlgMv') mvPending=null; dl.close(); } bdDown=null; },true);
 document.getElementById('mvOnce').onclick=()=>{
   const {from,to,x}=mvPending, r=x.rule, snap=JSON.stringify(S), fk=key(from.date,from.h,from.s), tk=key(to.date,to.h,to.s);
   S.skips[r.id+'|'+from.date]='moved';
@@ -1415,6 +1420,7 @@ function receive(f){
   f.text().then(t=>{
     const bad=()=>alert('予約データのファイルではありません。iPadの「PCへ送る」で作ったファイルを選んでください。');
     let d; try{ d=JSON.parse(t); }catch(e){ bad(); return; }
+    if(d && d.app==='amatsumi_yoyaku' && d.move && d.pack){ moveIn(d); return; }
     const data=d && d.app==='amatsumi_yoyaku' ? d.data : d;
     if(!data || typeof data.bookings!=='object'){ bad(); return; }
     const m=roMeta();
@@ -1456,6 +1462,76 @@ document.getElementById('btnUpdate').onclick=async()=>{
 };
 document.getElementById('upGo').onclick=goLatest;
 document.getElementById('btnUpdate').title+=`\n今の版：${APP_VER}`;
+// ---- 住所の引っ越し(GitHub → Cloudflare)。予約データは iPad の中だけで受け渡す(ネットには送らない) ----
+const NEW_ORIGIN='https://amatsumi-yoyaku.pages.dev', NEW_URL=NEW_ORIGIN+'/', OLD_ORIGIN='https://naokishobosai0214-dot.github.io';
+const isOldSite = location.origin===OLD_ORIGIN && location.pathname.startsWith('/yoyakuhyo/');
+const isNewSite = location.origin===NEW_ORIGIN;
+document.getElementById('dlgMove').addEventListener('cancel',e=>e.preventDefault());
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsSet(k,v){ try{ if(v==null) localStorage.removeItem(k); else localStorage.setItem(k,v); }catch(e){} }
+function hasData(raw){ try{ const d=JSON.parse(raw); return !!d && (Object.keys(d.bookings||{}).length>0 || (d.rules||[]).length>0 || (d.patients||[]).length>0); }catch(e){ return false; } }
+function movePack(){ return {main:lsGet(KEY), done:lsGet(KEY+'_done'), fs:lsGet(KEY+'_fs'), pc:lsGet(KEY+'_pc')}; }
+// 新しい住所で受け取る(画面どうし or ファイル)
+function moveIn(d){
+  const pk = d.pack || {main:JSON.stringify(d.data), done:d.done||null, fs:null, pc:null};
+  if(!pk.main || !hasData(pk.main)){ alert('前の住所の予約表には、移す予約がありませんでした。'); return false; }
+  if(hasData(lsGet(KEY)) && !confirm('この新しい予約表には、もう予約が入っています。\n前の住所の予約で置き換えますか？(今ここにある予約は消えます)')) return false;
+  lsSet(KEY,pk.main); lsSet(KEY+'_done',pk.done); if(pk.fs!=null) lsSet(KEY+'_fs',pk.fs); lsSet(KEY+'_pc',pk.pc);
+  S=load(); try{ DONE=JSON.parse(lsGet(KEY+'_done'))||{}; }catch(e){ DONE={}; }
+  document.querySelectorAll('dialog[open]').forEach(x=>x.close()); render();
+  alert('引っ越しが済みました。予約データをこの新しい住所の予約表に移しました。\nこれからは、この住所(amatsumi-yoyaku.pages.dev)の予約表を使ってください。');
+  return true;
+}
+if(isNewSite && location.hash==='#move'){
+  try{ history.replaceState(null,'',location.pathname); }catch(e){}
+  let got=false, tries=0;
+  addEventListener('message',e=>{
+    if(e.origin!==OLD_ORIGIN || !e.data || e.data.t!=='amatsumi-move-data' || got) return;
+    got=true; const ok=moveIn({pack:e.data.pack});
+    try{ e.source.postMessage({t:ok?'amatsumi-move-ok':'amatsumi-move-ng'}, OLD_ORIGIN); }catch(err){}
+  });
+  const ping=()=>{ if(got) return; if(window.opener){ try{ window.opener.postMessage({t:'amatsumi-move-ready'}, OLD_ORIGIN); }catch(e){} }
+    if(++tries<20) setTimeout(ping,500); else if(!got) alert('前の住所の予約表とつながりませんでした。\n前の住所の予約表で「ファイルで移す」を使ってください。'); };
+  setTimeout(ping,300);
+}
+// 古い住所:引っ越しの案内(閉じられない)
+function showMove(){
+  const moved=lsGet(KEY+'_moved'), any=hasData(lsGet(KEY));
+  const body=document.getElementById('mvBody'), foot=document.getElementById('mvFoot');
+  body.innerHTML = `<p style="margin:4px 0 8px">予約表は、これから <b>${NEW_URL}</b> で使います。</p>`
+    + (moved ? `<p class="note">${esc(moved)} に予約データを新しい住所へ移しました。<br>ここで予約を入れても、新しい予約表には反映されません。新しい住所の予約表を使ってください。</p>`
+       : any ? `<p class="note">この予約表に入っている予約データを、下のボタンで新しい住所へ移します。データはこの iPad(パソコン)の中だけで移り、インターネットには送られません。<br>新しい画面が開いたら、そのままお待ちください。</p>`
+       : `<p class="note">この予約表には予約が入っていないので、新しい住所を開くだけで大丈夫です。</p>`)
+    + `<p class="note" style="margin-top:8px">ホーム画面のアイコンから開いている場合は、新しい住所の予約表で、もう一度「ホーム画面に追加」をしてください。</p>`
+    + `<div id="mvMsg" class="note" style="color:#b91c1c"></div>`;
+  foot.innerHTML = (any ? `<button type="button" id="mvFile">うまくいかないとき：ファイルで移す</button>` : '')
+    + `<span class="spacer"></span>`
+    + (any && !moved ? `<button type="button" class="primary" id="mvGo" style="font-size:16px;padding:10px 18px">予約データを新しい住所へ移す</button>`
+       : `<button type="button" class="primary" id="mvOpen">新しい予約表を開く</button>`)
+    + (any && moved ? `<button type="button" id="mvGo">もう一度移す</button>` : '');
+  const g=document.getElementById('mvGo'), o=document.getElementById('mvOpen'), f=document.getElementById('mvFile');
+  if(o) o.onclick=()=>{ location.href=NEW_URL; };
+  if(g) g.onclick=()=>{
+    const w=window.open(NEW_URL+'#move','_blank');
+    if(!w){ document.getElementById('mvMsg').textContent='新しい画面を開けませんでした。もう一度押すか、「ファイルで移す」を使ってください。'; return; }
+    const on=e=>{
+      if(e.origin!==NEW_ORIGIN || !e.data) return;
+      if(e.data.t==='amatsumi-move-ready'){ try{ e.source.postMessage({t:'amatsumi-move-data', pack:movePack()}, NEW_ORIGIN); }catch(err){} }
+      if(e.data.t==='amatsumi-move-ok'){ removeEventListener('message',on); lsSet(KEY+'_moved', stamp(new Date())); showMove(); }
+    };
+    addEventListener('message',on);
+  };
+  if(f) f.onclick=async()=>{
+    const now=new Date(), body=JSON.stringify({app:'amatsumi_yoyaku', move:true, sentAt:stamp(now), pack:movePack()});
+    const name=`予約表の引っ越しデータ_${ymd(now).replace(/-/g,'')}.json`;
+    const fl=new File([body],name,{type:'application/json'});
+    if(navigator.canShare && navigator.canShare({files:[fl]})){ try{ await navigator.share({files:[fl], title:'予約表の引っ越しデータ'}); }catch(e){} }
+    else { const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([body],{type:'application/json'})); a.download=name; a.click(); }
+    document.getElementById('mvMsg').innerHTML='保存したファイルを、新しい住所の予約表の「iPadのデータを読み込む」で選んでください(この iPad の「ファイル」に保存するのが簡単です)。';
+  };
+  const dl=document.getElementById('dlgMove'); if(!dl.open) dl.showModal();
+}
+if(isOldSite) setTimeout(showMove,0);
 // 決まった時間の「LINEで送る」:iPad のショートカット(オートメーション)が ?line=7 付きでこのページを開く
 // → 確認の画面を出して、ボタン1回で LINE へ(自動で LINE を開くのは iPad が止めるので、押してもらう)
 const LA=(()=>{ const q=new URLSearchParams(location.search); if(!q.has('line')) return null; const n=+q.get('line'); return {days:[7,14,28].includes(n)?n:7, memo:q.get('memo')==='1'}; })();
