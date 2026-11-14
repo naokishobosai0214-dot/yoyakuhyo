@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="ja">
-<head><meta name="robots" content="noindex,nofollow">
+<head><meta name="robots" content="noindex,nofollow"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; manifest-src 'self'; base-uri 'none'">
 <meta charset="utf-8">
-<meta name="app-ver" content="2026-11-14 23:34">
+<meta name="app-ver" content="2026-11-14 23:40">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -63,10 +63,11 @@ th.day .hol{display:block;font-size:10px;color:var(--off-t);font-weight:bold}
 .legend{display:flex;gap:10px;flex-wrap:wrap;padding:8px 16px;font-size:12px;color:var(--sub)}
 .legend span{display:inline-flex;align-items:center;gap:4px}
 .sw{width:14px;height:14px;border-radius:3px;border-left:4px solid}
-.wrap{padding:0 16px 24px;overflow-x:auto}
+.wrap{padding:0 16px 76px;overflow-x:auto}
 table{border-collapse:collapse;background:var(--panel);min-width:900px;width:100%;table-layout:fixed}
 th,td{border:1px solid var(--line);vertical-align:top}
-thead th{background:#eef1f5;padding:6px 4px;font-size:13px;position:sticky;top:0}
+thead th{background:#eef1f5;padding:6px 4px;font-size:13px;position:sticky;top:var(--hh,0px);z-index:4}
+@media (min-width:701px){ .wrap{overflow-x:visible} }
 th.time{width:56px;font-size:12px;color:var(--sub);text-align:right;padding:4px 6px;background:#f8f9fb}
 th.sun{color:#c0262d} th.sat{color:#1d5fc0}
 th.day{cursor:pointer} th.day:hover{background:#dde7f7}
@@ -180,7 +181,7 @@ body.bkdrag,body.bkdrag *{cursor:grabbing!important}
 .toast[hidden]{display:none}
 /* 全画面(メニューを隠す) */
 body.fs header,body.fs .legend{display:none}
-body.fs .wrap{padding:0 0 8px}
+body.fs .wrap{padding:0 0 76px}
 .fsbar{position:fixed;bottom:12px;right:12px;z-index:20;display:flex;gap:4px;background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:10px;padding:4px;box-shadow:0 2px 8px rgba(0,0,0,.15)}
 .fsbar button{padding:6px 10px;font-size:14px}
 .fsbar #fsRange{align-self:center;font-weight:bold;font-size:13px;padding:0 4px;white-space:nowrap}
@@ -248,6 +249,7 @@ input[type=text],input[type=url],textarea,select{font:inherit;border:1px solid v
   header{position:static;border:none}
   body{background:#fff}
   .wrap{padding:0;overflow:visible}
+  thead th{top:0}
   table{min-width:0}
   .slot .lbl,.add2{display:none!important}
   td.memo textarea{min-height:40px}
@@ -400,13 +402,13 @@ input[type=text],input[type=url],textarea,select{font:inherit;border:1px solid v
 <dialog id="dlgLA">
   <div class="dh">予約を LINE で送る</div>
   <div class="db"><p id="laText" style="margin:4px 0 0"></p>
-    <div class="note" style="margin-top:8px">下の「LINEで送る」を押すと LINE がひらきます。送り先に<b>先生ご自身(Keepメモ)</b>を選んで送ってください。</div></div>
+    <div class="note" style="margin-top:8px">下の「LINEで送る」を押すと共有の画面がひらきます。<b>LINE</b> を選び、送り先に<b>先生ご自身(Keepメモ)</b>を選んで送ってください。</div></div>
   <div class="df"><button type="button" id="laNo">やめる</button><span class="spacer"></span><button type="button" class="primary" id="laGo" style="font-size:18px;padding:10px 22px">LINEで送る</button></div>
 </dialog>
 <dialog id="dlgE">
   <div class="dh">スマホ・LINEで予約を見る</div>
   <div class="db">
-    <div class="note"><b>LINEで送る</b>：今日からの予約を文字のリストにして、LINEに送ります。LINEの画面がひらいたら、送り先に<b>先生ご自身(Keepメモ)</b>を選んでください(パソコンでは、リストがコピーされるので、LINE アプリの Keepメモに Ctrl+V で貼り付けます)。予約を変えたら、もう一度送ってください。</div>
+    <div class="note"><b>LINEで送る</b>：今日からの予約を文字のリストにして、LINEに送ります。iPad では共有の画面がひらくので <b>LINE</b> を選び、送り先に<b>先生ご自身(Keepメモ)</b>を選んでください(パソコンでは、リストがコピーされるので、LINE アプリの Keepメモに Ctrl+V で貼り付けます)。予約を変えたら、もう一度送ってください。</div>
     <label class="row">期間
       <select id="eWeeks">
         <option value="7" selected>今日から1週間</option>
@@ -563,7 +565,8 @@ function cDone(o){ const RE_BKEY=/^\d{4}-\d{2}-\d{2}\|\d{1,2}\|[01]$/; const r={
 // キャンセル・固定客の休みは MEMO 本文に書かず、記録(S.cancels / S.skips)から行を作って MEMO 欄の上に「戻す」付きで出す
 function autoLines(ds,st){ st=st||S; const out=[];
   (st.cancels||[]).forEach((c,i)=>{ if(c.date===ds) out.push({h:c.h,s:c.s,text:`${c.h}:00 ${c.name}さん キャンセル`,ci:i}); });
-  (st.rules||[]).forEach(r=>{ if(st.skips[r.id+'|'+ds]===true) out.push({h:r.hour,s:r.slot,text:`${r.hour}:00 ${r.name}さん 休み`,rid:r.id}); });
+  const dw=parse(ds).getDay();
+  (st.rules||[]).forEach(r=>{ if(st.skips[r.id+'|'+ds]===true && r.dow===dw && r.from<=ds && (!r.to||ds<=r.to) && weeksBetween(r.from,ds)%(r.every||1)===0) out.push({h:r.hour,s:r.slot,text:`${r.hour}:00 ${r.name}さん 休み`,rid:r.id}); });
   return out.sort((a,b)=>a.h-b.h||a.s-b.s); }
 function stripAuto(st){ const ds=new Set([...(st.cancels||[]).map(c=>c.date), ...Object.keys(st.skips||{}).filter(k=>st.skips[k]===true).map(k=>k.split('|')[1])]);
   ds.forEach(d=>{ const m=st.dayMemos[d]; if(!m) return; const al=new Set(autoLines(d,st).map(a=>a.text)); const v=m.split('\n').filter(l=>!al.has(l.trim())).join('\n').trim(); if(v) st.dayMemos[d]=v; else delete st.dayMemos[d]; }); }
@@ -642,6 +645,9 @@ function cellHtml(x,k){
   return `<div class="bk ${x.type||'normal'} ${x.kind==='rule'?'fixed':''} ${dn?'done':''}">${kTag(x.name)}${tags}<span class="nm">${esc(x.name)}</span>${dn?'<b class="dck" title="鍼フォニーに入力済み">✓</b>':''}${x.memo?`<span class="memo">${esc(x.memo)}</span>`:''}</div>`;
 }
 
+// 見出し(日付の行)を貼り付ける位置=上のヘッダーの高さ(全画面ではヘッダーなし)
+function setHH(){ const h=document.querySelector('header'); const v=h && getComputedStyle(h).display!=='none' && getComputedStyle(h).position==='sticky' ? h.offsetHeight : 0; document.documentElement.style.setProperty('--hh', v+'px'); }
+addEventListener('resize',setHH);
 function render(){
   const days = dayMode() ? [new Date(curDay.getFullYear(),curDay.getMonth(),curDay.getDate())] : [...Array(7)].map((_,i)=>addDays(weekStart,i));
   const dm = dayMode();
@@ -685,6 +691,7 @@ function render(){
   document.getElementById('grid').innerHTML = h;
   const m=roMeta(); document.getElementById('roBar').hidden=!m;
   if(m) document.getElementById('roInfo').textContent=`iPadで送った日時：${m.sentAt||'不明'}　読み込んだ日時：${m.loadedAt}`;
+  setHH();
 }
 
 document.getElementById('grid').addEventListener('click',e=>{
@@ -831,7 +838,7 @@ document.getElementById('toastUndo').onclick=()=>{
 // ---- 全画面(メニューを隠す)。状態はこの端末に覚える ----
 const FS_KEY=KEY+'_fs';
 function setFs(on,fromBtn){
-  document.body.classList.toggle('fs',on);
+  document.body.classList.toggle('fs',on); setTimeout(setHH,0);
   document.getElementById('fsBtn').textContent = on ? '☰ メニュー' : '⛶ 表を大きく';
   try{ localStorage.setItem(FS_KEY,on?'1':'0'); }catch(e){}
   if(fromBtn){ try{ const de=document.documentElement;
@@ -1314,7 +1321,9 @@ async function copyText(txt){
 }
 document.getElementById('eLine').onclick=async()=>{
   const txt=lineText(...eOpts());
-  if(isMobileDev()){ window.open('https://line.me/R/share?text='+encodeURIComponent(txt),'_blank','noopener'); dlgE.close(); return; }
+  if(isMobileDev()){
+    if(navigator.share){ try{ await navigator.share({text:txt}); dlgE.close(); return; }catch(e){ if(e.name==='AbortError') return; } }
+    window.open('https://line.me/R/share?text='+encodeURIComponent(txt),'_blank','noopener'); dlgE.close(); return; }
   if(await copyText(txt)){ alert('予約のリストをコピーしました。\nパソコンの LINE アプリで Keepメモ(または自分だけのトーク)を開き、入力欄に Ctrl+V で貼り付けて送ってください。'); dlgE.close(); }
   else alert('コピーできませんでした。「ファイルで書き出す」を使ってください。');
 };
@@ -1542,11 +1551,13 @@ if(isNewSite && location.hash==='#move'){
 // 古い住所:引っ越しの案内(閉じられない)
 // iOS のホーム画面アイコンから開いたとき(Safari と保存場所が別)。新しい画面を開く方法だと Safari 側に入ってしまう
 function isStandalone(){ try{ return navigator.standalone===true || matchMedia('(display-mode: standalone)').matches; }catch(e){ return false; } }
-function showMove(){
+function clearOld(){ [KEY, KEY+'_done', KEY+'_pc', KEY+'_fs'].forEach(k=>lsSet(k,null)); }
+function showMove(justMoved){
   const moved=lsGet(KEY+'_moved'), any=hasData(lsGet(KEY)), app=isStandalone();
+  if(!any && !justMoved){ location.replace(NEW_URL); return; } // 予約がない(移し終えた)端末は新しい住所へ
   const body=document.getElementById('mvBody'), foot=document.getElementById('mvFoot');
   body.innerHTML = `<p style="margin:4px 0 8px">予約表は、これから <b>${NEW_URL}</b> で使います。</p>`
-    + (moved ? `<p class="note">${esc(moved)} に予約データを新しい住所へ移しました。<br>ここで予約を入れても、新しい予約表には反映されません。新しい住所の予約表を使ってください。</p>`
+    + (moved ? `<p class="note">${esc(moved)} に予約データを新しい住所へ移しました。この古い住所に残っていたデータは消しました。<br>これからは新しい住所の予約表を使ってください。</p>`
        : any && app ? `<div class="note" style="line-height:1.7">ホーム画面のアイコンから開いているので、次の順で移してください(データはこの iPad の中だけで移ります)。<ol style="margin:4px 0 0 18px;padding:0">
            <li>下の「<b>移すファイルを保存する</b>」→ 出てきた画面で「<b>"ファイル"に保存</b>」</li>
            <li>Safari で <b>${NEW_URL}</b> を開き、共有ボタン →「<b>ホーム画面に追加</b>」</li>
@@ -1564,7 +1575,7 @@ function showMove(){
        : `<button type="button" class="primary" id="mvOpen">新しい予約表を開く</button>`)
     + (any && moved && !app ? `<button type="button" id="mvGo">もう一度移す</button>` : '');
   const md0=document.getElementById('mvDone');
-  if(md0) md0.onclick=()=>{ if(confirm('新しいアイコンの予約表に、予約が出ていることを確かめましたか？')){ lsSet(KEY+'_moved', stamp(new Date())); showMove(); } };
+  if(md0) md0.onclick=()=>{ if(confirm('新しいアイコンの予約表に、予約が出ていることを確かめましたか？')){ lsSet(KEY+'_moved', stamp(new Date())); clearOld(); showMove(true); } };
   const g=document.getElementById('mvGo'), o=document.getElementById('mvOpen'), f=document.getElementById('mvFile');
   if(o) o.onclick=()=>{ location.href=NEW_URL; };
   if(g) g.onclick=()=>{
@@ -1574,7 +1585,7 @@ function showMove(){
       if(e.origin!==NEW_ORIGIN || !e.data) return;
       if(e.data.t==='amatsumi-move-ready'){ try{ e.source.postMessage({t:'amatsumi-move-data', pack:movePack()}, NEW_ORIGIN); }catch(err){} }
       if(e.data.t==='amatsumi-move-ng'){ document.getElementById('mvMsg').textContent='新しい予約表の側で、移すのをやめました。もう一度押すとやり直せます。'; }
-      if(e.data.t==='amatsumi-move-ok'){ removeEventListener('message',on); lsSet(KEY+'_moved', stamp(new Date())); showMove(); }
+      if(e.data.t==='amatsumi-move-ok'){ removeEventListener('message',on); lsSet(KEY+'_moved', stamp(new Date())); clearOld(); showMove(true); }
     };
     addEventListener('message',on);
   };
